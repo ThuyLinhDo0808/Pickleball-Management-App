@@ -1,0 +1,24 @@
+# Bỏ qua thư viện của Node.js (Cực kỳ quan trọng)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Bỏ qua file biến môi trường chứa khóa bảo mật (Cực kỳ quan trọng)
+.env
+.env.local
+
+# Bỏ qua các file sinh ra từ quá trình build của Expo & React Native
+.expo/
+dist/
+build/
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# Bỏ qua file cấu hình của hệ điều hành
+.DS_Store
+Thumbs.db
