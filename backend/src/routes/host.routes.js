@@ -26,6 +26,9 @@ router.get('/me', async (req, res) => {
 // from a verified payment webhook (Stripe/RevenueCat/etc.), never directly
 // from the client — wire that up before launch.
 router.post('/subscription', async (req, res) => {
+  if (process.env.ALLOW_TIER_SELF_SERVE === 'false') {
+    return res.status(403).json({ error: 'SELF_SERVE_DISABLED', message: 'Plan changes are handled through billing, not from the app.' });
+  }
   const { tier } = req.body;
   if (!['free', 'basic', 'standard', 'pro'].includes(tier)) {
     return res.status(400).json({ error: 'tier must be one of free, basic, standard, pro.' });

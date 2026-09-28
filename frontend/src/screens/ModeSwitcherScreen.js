@@ -1,35 +1,44 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Pressable, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMode } from '../context/ModeContext';
+import { supabase } from '../services/supabase';
+import { colors } from '../theme';
+import { T } from '../components/ui';
 
-export default function ModeSwitcherScreen() {
+export default function ModeSwitcherScreen({ email }) {
   const { setMode } = useMode();
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Pickleball Host</Text>
-      <Text style={styles.subtitle}>Choose your workspace</Text>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.center}>
+        <T bold size={28} style={{ textAlign: 'center' }}>Pickleball Host</T>
+        <T muted style={{ textAlign: 'center', marginBottom: 32 }}>Choose your workspace</T>
 
-      <Pressable style={[styles.card, styles.clubCard]} onPress={() => setMode('club')}>
-        <Text style={styles.cardTitle}>🏓 Club Manager</Text>
-        <Text style={styles.cardDesc}>Members, monthly funds, rankings</Text>
-      </Pressable>
+        <Pressable style={[styles.card, { backgroundColor: '#1D4ED8' }]} onPress={() => setMode('club')}>
+          <T bold size={20} style={{ marginBottom: 6 }}>🏓 Club Manager</T>
+          <T size={13} style={{ color: '#E2E8F0' }}>Members, matches, rankings and the monthly fund</T>
+        </Pressable>
 
-      <Pressable style={[styles.card, styles.eventCard]} onPress={() => setMode('event')}>
-        <Text style={styles.cardTitle}>📅 Xé Vé Manager</Text>
-        <Text style={styles.cardDesc}>One-off events, check-in, event P&L</Text>
-      </Pressable>
-    </View>
+        <Pressable style={[styles.card, { backgroundColor: '#059669' }]} onPress={() => setMode('event')}>
+          <T bold size={20} style={{ marginBottom: 6 }}>📅 Xé Vé Manager</T>
+          <T size={13} style={{ color: '#E2E8F0' }}>One-off events, waitlist, check-in and profit per event</T>
+        </Pressable>
+      </View>
+
+      <View style={styles.footer}>
+        {email ? <T muted size={12} style={{ marginBottom: 8 }}>Signed in as {email}</T> : null}
+        <Pressable onPress={() => supabase.auth.signOut()} hitSlop={10}>
+          <T style={{ color: colors.primaryLight, fontWeight: '600' }}>Sign out</T>
+        </Pressable>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#0F172A' },
-  title: { fontSize: 28, fontWeight: '700', color: '#fff', textAlign: 'center' },
-  subtitle: { fontSize: 14, color: '#94A3B8', textAlign: 'center', marginBottom: 32 },
+  container: { flex: 1, backgroundColor: colors.bg },
+  center: { flex: 1, justifyContent: 'center', padding: 24 },
   card: { borderRadius: 16, padding: 24, marginBottom: 16 },
-  clubCard: { backgroundColor: '#1D4ED8' },
-  eventCard: { backgroundColor: '#059669' },
-  cardTitle: { fontSize: 20, fontWeight: '700', color: '#fff', marginBottom: 6 },
-  cardDesc: { fontSize: 13, color: '#E2E8F0' },
+  footer: { alignItems: 'center', paddingBottom: 16 },
 });

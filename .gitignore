@@ -6,6 +6,7 @@ yarn-error.log
 # Bỏ qua file biến môi trường chứa khóa bảo mật (Cực kỳ quan trọng)
 .env
 .env.local
+.env.example
 
 # Bỏ qua các file sinh ra từ quá trình build của Expo & React Native
 .expo/

@@ -1,12 +1,13 @@
 const express = require('express');
 const { supabaseAdmin } = require('../config/supabase');
 const { requireAuth } = require('../middleware/auth');
-const { dbError, notFound } = require('../utils/respond');
+const { dbError, notFound, isUuid } = require('../utils/respond');
 
 const router = express.Router();
 router.use(requireAuth);
 
 async function assertOwnership(req, { club_id, event_id }) {
+  if ((club_id && !isUuid(club_id)) || (event_id && !isUuid(event_id))) return false;
   if (club_id) {
     const { data } = await supabaseAdmin.from('clubs').select('id').eq('id', club_id).eq('host_id', req.user.id).maybeSingle();
     return !!data;
@@ -65,6 +66,7 @@ router.post('/', async (req, res) => {
 // in schema.sql). Optionally pass replacement fields to insert a corrected
 // entry in the same call.
 router.post('/:transactionId/void', async (req, res) => {
+  if (!isUuid(req.params.transactionId)) return res.status(400).json({ error: 'Invalid transaction id.' });
   const { void_reason, replacement } = req.body;
 
   const { data: existing, error: fetchErr } = await supabaseAdmin
@@ -74,6 +76,7 @@ router.post('/:transactionId/void', async (req, res) => {
     .maybeSingle();
   if (fetchErr) return dbError(res, fetchErr);
   if (!existing) return notFound(res, 'Transaction');
+  if (existing.is_voided) return res.status(409).json({ error: 'ALREADY_VOIDED', message: 'This transaction is already voided.' });
 
   const owned = await assertOwnership(req, { club_id: existing.club_id, event_id: existing.event_id });
   if (!owned) return notFound(res, 'Transaction');

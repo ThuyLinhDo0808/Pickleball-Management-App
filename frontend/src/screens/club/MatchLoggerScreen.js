@@ -1,173 +1,177 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import {
-  View, Text, FlatList, Pressable, TextInput, StyleSheet, Alert, ActivityIndicator,
-} from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { View, ScrollView, RefreshControl, Alert } from 'react-native';
 import { api } from '../../services/api';
+import { useLoad } from '../../hooks/useLoad';
+import { showError } from '../../utils/errors';
+import { formatDateTime } from '../../utils/format';
+import { colors } from '../../theme';
+import { T, Card, Button, Field, Segmented, Empty, ErrorState, Loading, SectionTitle } from '../../components/ui';
+import { Pressable } from 'react-native';
 
-// Simple two-team doubles score logger for a single club. In a full build
-// clubId would come from route params / a club picker; hardwired here so
-// the screen is a runnable, focused example per the brief.
-export default function MatchLoggerScreen({ clubId }) {
-  const [members, setMembers] = useState([]);
-  const [team1, setTeam1] = useState([]); // array of club_member_id
-  const [team2, setTeam2] = useState([]);
-  const [score1, setScore1] = useState('');
-  const [score2, setScore2] = useState('');
-  const [matches, setMatches] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [{ members }, { matches }] = await Promise.all([
-        api.get(`/api/clubs/${clubId}/members`),
-        api.get(`/api/matches?club_id=${clubId}`),
-      ]);
-      setMembers(members);
-      setMatches(matches);
-    } catch (err) {
-      Alert.alert('Could not load club data', err.message);
-    } finally {
-      setLoading(false);
-    }
+export default function MatchLoggerScreen({ route, navigation }) {
+  const { clubId } = route.params;
+  const { data, error, loading, refreshing, refresh, reload, retry } = useLoad(async () => {
+    const [m, mt] = await Promise.all([
+      api.get(`/api/clubs/${clubId}/members`),
+      api.get(`/api/matches?club_id=${clubId}`),
+    ]);
+    return { members: m.members, matches: mt.matches };
   }, [clubId]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  const [matchType, setMatchType] = useState('doubles');
+  const [team1, setTeam1] = useState([]);
+  const [team2, setTeam2] = useState([]);
+  const [s1, setS1] = useState('');
+  const [s2, setS2] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  function togglePlayer(team, memberId) {
-    const [list, setList] = team === 1 ? [team1, setTeam1] : [team2, setTeam2];
-    setList(list.includes(memberId) ? list.filter((id) => id !== memberId) : [...list, memberId]);
+  const need = matchType === 'singles' ? 1 : 2;
+  const active = useMemo(() => (data?.members || []).filter((m) => m.status === 'active'), [data]);
+  const nameOf = useMemo(() => {
+    const map = {};
+    (data?.members || []).forEach((m) => { map[m.id] = m.display_name; });
+    return map;
+  }, [data]);
+
+  if (loading) return <Loading />;
+  if (error && !data) return <ErrorState error={error} onRetry={retry} />;
+
+  function changeType(t) {
+    const n = t === 'singles' ? 1 : 2;
+    setMatchType(t);
+    setTeam1((x) => x.slice(0, n));
+    setTeam2((x) => x.slice(0, n));
   }
 
-  async function submitMatch() {
-    const s1 = Number(score1);
-    const s2 = Number(score2);
+  function toggle(team, id) {
+    const [mine, setMine, other] = team === 1 ? [team1, setTeam1, team2] : [team2, setTeam2, team1];
+    if (other.includes(id)) return;
+    if (mine.includes(id)) setMine(mine.filter((x) => x !== id));
+    else if (mine.length < need) setMine([...mine, id]);
+  }
 
-    if (!team1.length || !team2.length) {
-      return Alert.alert('Pick players', 'Select at least one player per team.');
+  async function submit() {
+    const a = Number(s1);
+    const b = Number(s2);
+    if (team1.length !== need || team2.length !== need) {
+      return Alert.alert('Pick the players', `${matchType === 'singles' ? 'Singles' : 'Doubles'} needs ${need} player${need > 1 ? 's' : ''} per team.`);
     }
-    if (team1.some((id) => team2.includes(id))) {
-      return Alert.alert('Duplicate player', 'A player can only be on one team.');
+    if (s1 === '' || s2 === '' || !Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0) {
+      return Alert.alert('Invalid score', 'Enter a whole-number score for both teams.');
     }
-    if (Number.isNaN(s1) || Number.isNaN(s2) || s1 === s2) {
-      return Alert.alert('Invalid score', 'Enter two different numeric scores.');
-    }
+    if (a === b) return Alert.alert('Invalid score', 'A match cannot end in a tie.');
 
     try {
       setSaving(true);
       await api.post('/api/matches', {
-        club_id: clubId,
-        match_type: team1.length > 1 ? 'doubles' : 'singles',
-        team1_score: s1,
-        team2_score: s2,
-        team1_player_ids: team1,
-        team2_player_ids: team2,
+        club_id: clubId, match_type: matchType,
+        team1_score: a, team2_score: b,
+        team1_player_ids: team1, team2_player_ids: team2,
       });
-      setTeam1([]); setTeam2([]); setScore1(''); setScore2('');
-      loadData();
-    } catch (err) {
-      Alert.alert('Could not save match', err.message);
+      setTeam1([]); setTeam2([]); setS1(''); setS2('');
+      reload();
+    } catch (e) {
+      showError('Could not save match', e, navigation);
     } finally {
       setSaving(false);
     }
   }
 
-  const nameFor = (id) => members.find((m) => m.id === id)?.display_name || '—';
-
-  if (loading) {
-    return <View style={styles.center}><ActivityIndicator size="large" /></View>;
+  function confirmDelete(match) {
+    Alert.alert('Delete this match?', 'It will be removed from rankings and win rates.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          try { await api.del(`/api/matches/${match.id}`); reload(); }
+          catch (e) { showError('Could not delete match', e, navigation); }
+        },
+      },
+    ]);
   }
 
+  const teamNames = (match, team) =>
+    match.match_players.filter((p) => p.team === team).map((p) => nameOf[p.club_member_id] || 'Unknown').join(' & ');
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Log a Match</Text>
+    <ScrollView
+      contentContainerStyle={{ padding: 16, paddingBottom: 40 }}
+      keyboardShouldPersistTaps="handled"
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.muted} />}
+    >
+      <T bold size={20} style={{ marginBottom: 12 }}>Log a match</T>
 
-      <View style={styles.teamsRow}>
-        <TeamPicker title="Team 1" members={members} selected={team1} onToggle={(id) => togglePlayer(1, id)} />
-        <TeamPicker title="Team 2" members={members} selected={team2} onToggle={(id) => togglePlayer(2, id)} />
-      </View>
-
-      <View style={styles.scoreRow}>
-        <TextInput
-          style={styles.scoreInput}
-          keyboardType="number-pad"
-          placeholder="Team 1"
-          placeholderTextColor="#94A3B8"
-          value={score1}
-          onChangeText={setScore1}
-        />
-        <Text style={styles.dash}>–</Text>
-        <TextInput
-          style={styles.scoreInput}
-          keyboardType="number-pad"
-          placeholder="Team 2"
-          placeholderTextColor="#94A3B8"
-          value={score2}
-          onChangeText={setScore2}
-        />
-      </View>
-
-      <Pressable style={styles.saveButton} onPress={submitMatch} disabled={saving}>
-        <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save Match'}</Text>
-      </Pressable>
-
-      <Text style={styles.subheader}>Recent matches</Text>
-      <FlatList
-        data={matches}
-        keyExtractor={(m) => m.id}
-        renderItem={({ item }) => (
-          <View style={styles.matchRow}>
-            <Text style={styles.matchText}>
-              {item.match_players.filter((p) => p.team === 1).map((p) => nameFor(p.club_member_id)).join(' & ')}
-              {'  '}{item.team1_score} – {item.team2_score}{'  '}
-              {item.match_players.filter((p) => p.team === 2).map((p) => nameFor(p.club_member_id)).join(' & ')}
-            </Text>
-          </View>
-        )}
-        ListEmptyComponent={<Text style={styles.empty}>No matches logged yet.</Text>}
+      <Segmented
+        value={matchType}
+        onChange={changeType}
+        options={[{ value: 'singles', label: 'Singles' }, { value: 'doubles', label: 'Doubles' }, { value: 'mixed', label: 'Mixed' }]}
       />
-    </View>
+
+      {active.length < need * 2 ? (
+        <Empty title="Add more members first" subtitle={`You need at least ${need * 2} active members to log a ${matchType} match.`} />
+      ) : (
+        <>
+          <TeamPicker title={`Team 1 (${team1.length}/${need})`} members={active} selected={team1} blocked={team2} onToggle={(id) => toggle(1, id)} />
+          <TeamPicker title={`Team 2 (${team2.length}/${need})`} members={active} selected={team2} blocked={team1} onToggle={(id) => toggle(2, id)} />
+
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 4 }}>
+            <Field style={{ flex: 1, marginBottom: 0 }} label="Team 1 score" value={s1} onChangeText={setS1} keyboardType="number-pad" placeholder="0" />
+            <T muted size={20} style={{ marginTop: 18 }}>–</T>
+            <Field style={{ flex: 1, marginBottom: 0 }} label="Team 2 score" value={s2} onChangeText={setS2} keyboardType="number-pad" placeholder="0" />
+          </View>
+          <Button title="Save match" onPress={submit} loading={saving} style={{ marginTop: 14 }} />
+        </>
+      )}
+
+      <SectionTitle>Recent matches</SectionTitle>
+      {(data?.matches || []).length === 0 ? (
+        <Empty title="No matches yet" subtitle="Saved matches appear here and feed the rankings." />
+      ) : (
+        <>
+          <T muted size={12} style={{ marginBottom: 8 }}>Long-press a match to delete it.</T>
+          {data.matches.map((m) => (
+            <Card key={m.id} onLongPress={() => confirmDelete(m)}>
+              {[1, 2].map((team) => {
+                const won = m.winner_team === team;
+                return (
+                  <View key={team} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 2 }}>
+                    <T bold={won} style={[{ flex: 1, paddingRight: 8 }, won ? { color: colors.ok } : null]}>{teamNames(m, team)}</T>
+                    <T bold={won} style={won ? { color: colors.ok } : null}>{team === 1 ? m.team1_score : m.team2_score}</T>
+                  </View>
+                );
+              })}
+              <T muted size={11} style={{ marginTop: 6 }}>{m.match_type} · {formatDateTime(m.played_at)}</T>
+            </Card>
+          ))}
+        </>
+      )}
+    </ScrollView>
   );
 }
 
-function TeamPicker({ title, members, selected, onToggle }) {
+function TeamPicker({ title, members, selected, blocked, onToggle }) {
   return (
-    <View style={styles.teamPicker}>
-      <Text style={styles.teamTitle}>{title}</Text>
-      {members.map((m) => (
-        <Pressable
-          key={m.id}
-          style={[styles.playerChip, selected.includes(m.id) && styles.playerChipSelected]}
-          onPress={() => onToggle(m.id)}
-        >
-          <Text style={[styles.playerChipText, selected.includes(m.id) && styles.playerChipTextSelected]}>
-            {m.display_name}
-          </Text>
-        </Pressable>
-      ))}
-    </View>
+    <Card>
+      <T bold style={{ color: colors.primaryLight, marginBottom: 8 }}>{title}</T>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {members.map((m) => {
+          const on = selected.includes(m.id);
+          const off = blocked.includes(m.id);
+          return (
+            <Pressable
+              key={m.id}
+              onPress={() => onToggle(m.id)}
+              disabled={off}
+              style={{
+                paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999,
+                backgroundColor: on ? colors.primary : colors.card2, opacity: off ? 0.3 : 1,
+              }}
+            >
+              <T size={13} bold={on}>{m.display_name}</T>
+            </Pressable>
+          );
+        })}
+      </View>
+    </Card>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0F172A', padding: 16 },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F172A' },
-  header: { fontSize: 22, fontWeight: '700', color: '#fff', marginBottom: 12 },
-  subheader: { fontSize: 16, fontWeight: '600', color: '#fff', marginTop: 20, marginBottom: 8 },
-  teamsRow: { flexDirection: 'row', gap: 12 },
-  teamPicker: { flex: 1, backgroundColor: '#1E293B', borderRadius: 12, padding: 10 },
-  teamTitle: { color: '#93C5FD', fontWeight: '700', marginBottom: 8 },
-  playerChip: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, marginBottom: 6, backgroundColor: '#334155' },
-  playerChipSelected: { backgroundColor: '#2563EB' },
-  playerChipText: { color: '#CBD5E1' },
-  playerChipTextSelected: { color: '#fff', fontWeight: '700' },
-  scoreRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, gap: 12 },
-  scoreInput: { backgroundColor: '#1E293B', color: '#fff', borderRadius: 8, padding: 12, width: 90, textAlign: 'center', fontSize: 18 },
-  dash: { color: '#94A3B8', fontSize: 20 },
-  saveButton: { backgroundColor: '#2563EB', borderRadius: 10, padding: 14, alignItems: 'center', marginTop: 16 },
-  saveButtonText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  matchRow: { backgroundColor: '#1E293B', borderRadius: 10, padding: 12, marginBottom: 8 },
-  matchText: { color: '#E2E8F0' },
-  empty: { color: '#64748B', textAlign: 'center', marginTop: 20 },
-});

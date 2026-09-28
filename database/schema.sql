@@ -66,7 +66,7 @@ create table if not exists public.users (
 -- 3. HOST SUBSCRIPTIONS  (tier -> capacity ceiling, shared across BOTH workspaces)
 -- ---------------------------------------------------------------------
 create table if not exists public.host_subscriptions (
-  id                uuid primary key default uuid_generate_v4(),
+  id                uuid primary key default gen_random_uuid(),
   host_id           uuid not null references public.users(id) on delete cascade,
   tier              subscription_tier not null default 'free',
   max_capacity      integer not null default 30,
@@ -103,7 +103,7 @@ create trigger trg_host_subscriptions_capacity
 -- 4. WORKSPACE 1 — CLUBS
 -- ---------------------------------------------------------------------
 create table if not exists public.clubs (
-  id            uuid primary key default uuid_generate_v4(),
+  id            uuid primary key default gen_random_uuid(),
   host_id       uuid not null references public.users(id) on delete cascade,
   name          text not null,
   description   text,
@@ -114,7 +114,7 @@ create table if not exists public.clubs (
 );
 
 create table if not exists public.club_members (
-  id            uuid primary key default uuid_generate_v4(),
+  id            uuid primary key default gen_random_uuid(),
   club_id       uuid not null references public.clubs(id) on delete cascade,
   user_id       uuid references public.users(id) on delete set null, -- null = offline/manual entry
   display_name  text not null,       -- host-entered name, always present even without a user_id
@@ -134,7 +134,7 @@ create index if not exists idx_club_members_club on public.club_members(club_id)
 -- 5. WORKSPACE 2 — EVENTS (Kèo)
 -- ---------------------------------------------------------------------
 create table if not exists public.events (
-  id                uuid primary key default uuid_generate_v4(),
+  id                uuid primary key default gen_random_uuid(),
   host_id           uuid not null references public.users(id) on delete cascade,
   title             text not null,
   event_date        date not null,
@@ -154,7 +154,7 @@ create table if not exists public.events (
 );
 
 create table if not exists public.event_participants (
-  id                uuid primary key default uuid_generate_v4(),
+  id                uuid primary key default gen_random_uuid(),
   event_id          uuid not null references public.events(id) on delete cascade,
   user_id           uuid references public.users(id) on delete set null,
   display_name      text not null,
@@ -182,7 +182,7 @@ create index if not exists idx_event_participants_active
 -- 6. MATCHES  (belongs to EITHER a club OR an event, never both/neither)
 -- ---------------------------------------------------------------------
 create table if not exists public.matches (
-  id              uuid primary key default uuid_generate_v4(),
+  id              uuid primary key default gen_random_uuid(),
   club_id         uuid references public.clubs(id) on delete cascade,
   event_id        uuid references public.events(id) on delete cascade,
   match_type      match_type not null default 'doubles',
@@ -204,7 +204,7 @@ create index if not exists idx_matches_event on public.matches(event_id);
 -- Players within a match. A player row points to EITHER a club_member OR an
 -- event_participant, matching whichever context the parent match belongs to.
 create table if not exists public.match_players (
-  id                  uuid primary key default uuid_generate_v4(),
+  id                  uuid primary key default gen_random_uuid(),
   match_id            uuid not null references public.matches(id) on delete cascade,
   club_member_id      uuid references public.club_members(id) on delete cascade,
   event_participant_id uuid references public.event_participants(id) on delete cascade,
@@ -225,7 +225,7 @@ create index if not exists idx_match_players_event_participant on public.match_p
 --    of amount/type — this preserves a full audit trail.
 -- ---------------------------------------------------------------------
 create table if not exists public.transactions (
-  id              uuid primary key default uuid_generate_v4(),
+  id              uuid primary key default gen_random_uuid(),
   club_id         uuid references public.clubs(id) on delete cascade,
   event_id        uuid references public.events(id) on delete cascade,
   type            transaction_type not null,
@@ -302,6 +302,8 @@ left join (
   from public.event_participants ep
   join public.events e on e.id = ep.event_id
   where ep.status in ('registered', 'waitlist', 'checked_in')
+    and e.status in ('draft', 'open', 'closed')     -- completed/cancelled events free their seats
+    and e.event_date >= current_date - 1            -- stale, forgotten events expire too
   group by e.host_id
 ) ep on ep.host_id = h.id;
 
@@ -407,30 +409,38 @@ alter table public.matches enable row level security;
 alter table public.match_players enable row level security;
 alter table public.transactions enable row level security;
 
+drop policy if exists "users_self" on public.users;
 create policy "users_self" on public.users
   for select using (auth.uid() = id);
+drop policy if exists "users_self_update" on public.users;
 create policy "users_self_update" on public.users
   for update using (auth.uid() = id);
 
+drop policy if exists "host_subscriptions_own" on public.host_subscriptions;
 create policy "host_subscriptions_own" on public.host_subscriptions
   for all using (auth.uid() = host_id);
 
+drop policy if exists "clubs_own" on public.clubs;
 create policy "clubs_own" on public.clubs
   for all using (auth.uid() = host_id);
 
+drop policy if exists "club_members_via_club" on public.club_members;
 create policy "club_members_via_club" on public.club_members
   for all using (
     exists (select 1 from public.clubs c where c.id = club_members.club_id and c.host_id = auth.uid())
   );
 
+drop policy if exists "events_own" on public.events;
 create policy "events_own" on public.events
   for all using (auth.uid() = host_id);
 
+drop policy if exists "event_participants_via_event" on public.event_participants;
 create policy "event_participants_via_event" on public.event_participants
   for all using (
     exists (select 1 from public.events e where e.id = event_participants.event_id and e.host_id = auth.uid())
   );
 
+drop policy if exists "matches_via_owner" on public.matches;
 create policy "matches_via_owner" on public.matches
   for all using (
     (club_id is not null and exists (select 1 from public.clubs c where c.id = matches.club_id and c.host_id = auth.uid()))
@@ -438,6 +448,7 @@ create policy "matches_via_owner" on public.matches
     (event_id is not null and exists (select 1 from public.events e where e.id = matches.event_id and e.host_id = auth.uid()))
   );
 
+drop policy if exists "match_players_via_match" on public.match_players;
 create policy "match_players_via_match" on public.match_players
   for all using (
     exists (
@@ -451,6 +462,7 @@ create policy "match_players_via_match" on public.match_players
     )
   );
 
+drop policy if exists "transactions_via_owner" on public.transactions;
 create policy "transactions_via_owner" on public.transactions
   for all using (
     (club_id is not null and exists (select 1 from public.clubs c where c.id = transactions.club_id and c.host_id = auth.uid()))
@@ -478,6 +490,23 @@ drop trigger if exists trg_on_auth_user_created on auth.users;
 create trigger trg_on_auth_user_created
   after insert on auth.users
   for each row execute function public.fn_handle_new_auth_user();
+
+
+-- =====================================================================
+-- 11. BACKFILL — accounts that signed up BEFORE this script was run
+--     (the signup trigger only fires for new users). Safe to re-run.
+-- =====================================================================
+insert into public.users (id, email, full_name)
+select au.id, au.email, coalesce(au.raw_user_meta_data->>'full_name', split_part(au.email, '@', 1))
+from auth.users au
+on conflict (id) do nothing;
+
+insert into public.host_subscriptions (host_id, tier)
+select u.id, 'free' from public.users u
+on conflict (host_id) do nothing;
+
+-- Ask the API layer to pick up the new tables immediately.
+notify pgrst, 'reload schema';
 
 -- =====================================================================
 -- END OF SCHEMA

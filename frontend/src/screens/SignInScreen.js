@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, Pressable, StyleSheet, ActivityIndicator,
   KeyboardAvoidingView, Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../services/supabase';
 
 export default function SignInScreen() {
@@ -51,6 +52,7 @@ export default function SignInScreen() {
   }
 
   return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#0F172A' }}>
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -105,6 +107,7 @@ export default function SignInScreen() {
         </Text>
       </Pressable>
     </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 

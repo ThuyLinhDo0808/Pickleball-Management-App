@@ -1,161 +1,151 @@
 const express = require('express');
 const { supabaseAdmin } = require('../config/supabase');
 const { requireAuth } = require('../middleware/auth');
-const { checkCapacity } = require('../middleware/checkCapacity');
-const { dbError, notFound } = require('../utils/respond');
+const { checkCapacity, getUsage, limitBody } = require('../middleware/checkCapacity');
+const { dbError, notFound, isUuid, pick } = require('../utils/respond');
 
 const router = express.Router();
 router.use(requireAuth);
 
-// Every query below is scoped by host_id = req.user.id — a host can only
-// ever see or mutate their own clubs, regardless of what id is in the URL.
+// Every route with :clubId first proves the club belongs to the caller.
+// This closes the hole where knowing another host's club UUID was enough.
+router.param('clubId', async (req, res, next, clubId) => {
+  if (!isUuid(clubId)) return res.status(400).json({ error: 'Invalid club id.' });
+  const { data, error } = await supabaseAdmin
+    .from('clubs').select('*').eq('id', clubId).eq('host_id', req.user.id).maybeSingle();
+  if (error) return dbError(res, error);
+  if (!data) return notFound(res, 'Club');
+  req.club = data;
+  next();
+});
 
-// ---- Clubs -----------------------------------------------------------
+const MEMBER_TYPES = ['fixed', 'guest'];
+const MEMBER_STATUSES = ['active', 'inactive', 'removed'];
+
+function validDupr(v) {
+  if (v === null || v === undefined || v === '') return true;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n <= 9.99;
+}
+
+// ---- Clubs ---------------------------------------------------------------
 
 router.get('/', async (req, res) => {
   const { data, error } = await supabaseAdmin
-    .from('clubs')
-    .select('*')
-    .eq('host_id', req.user.id)
-    .order('created_at', { ascending: false });
+    .from('clubs').select('*').eq('host_id', req.user.id).order('created_at', { ascending: false });
   if (error) return dbError(res, error);
   res.json({ clubs: data });
 });
 
 router.post('/', async (req, res) => {
-  const { name, description, monthly_fee_default } = req.body;
+  const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'name is required.' });
+  const fee = req.body.monthly_fee_default === undefined ? 0 : Number(req.body.monthly_fee_default);
+  if (!Number.isFinite(fee) || fee < 0) return res.status(400).json({ error: 'monthly_fee_default must be 0 or more.' });
 
   const { data, error } = await supabaseAdmin
     .from('clubs')
-    .insert({ host_id: req.user.id, name, description, monthly_fee_default: monthly_fee_default || 0 })
-    .select()
-    .single();
+    .insert({ host_id: req.user.id, name, description: req.body.description || null, monthly_fee_default: fee })
+    .select().single();
   if (error) return dbError(res, error);
   res.status(201).json({ club: data });
 });
 
-router.get('/:clubId', async (req, res) => {
-  const { data, error } = await supabaseAdmin
-    .from('clubs')
-    .select('*')
-    .eq('id', req.params.clubId)
-    .eq('host_id', req.user.id)
-    .maybeSingle();
-  if (error) return dbError(res, error);
-  if (!data) return notFound(res, 'Club');
-  res.json({ club: data });
-});
+router.get('/:clubId', (req, res) => res.json({ club: req.club }));
 
 router.patch('/:clubId', async (req, res) => {
-  const { name, description, monthly_fee_default, is_active } = req.body;
+  const fields = pick(req.body, ['name', 'description', 'monthly_fee_default', 'is_active']);
+  if (fields.name !== undefined && !String(fields.name).trim()) return res.status(400).json({ error: 'name cannot be empty.' });
   const { data, error } = await supabaseAdmin
-    .from('clubs')
-    .update({ name, description, monthly_fee_default, is_active, updated_at: new Date().toISOString() })
-    .eq('id', req.params.clubId)
-    .eq('host_id', req.user.id)
-    .select()
-    .maybeSingle();
+    .from('clubs').update({ ...fields, updated_at: new Date().toISOString() })
+    .eq('id', req.club.id).select().single();
   if (error) return dbError(res, error);
-  if (!data) return notFound(res, 'Club');
   res.json({ club: data });
 });
 
-// ---- Club members ------------------------------------------------------
+// ---- Members ---------------------------------------------------------------
 
 router.get('/:clubId/members', async (req, res) => {
   const { data, error } = await supabaseAdmin
-    .from('club_members')
-    .select('*')
-    .eq('club_id', req.params.clubId)
-    .order('display_name', { ascending: true });
+    .from('club_members').select('*').eq('club_id', req.club.id).order('display_name', { ascending: true });
   if (error) return dbError(res, error);
   res.json({ members: data });
 });
 
-// checkCapacity runs AFTER we confirm the club belongs to this host, so a
-// host can't be blocked/unblocked by someone else's usage, and can't probe
-// other hosts' clubs.
-router.post('/:clubId/members', async (req, res, next) => {
-  const { data: club, error: clubErr } = await supabaseAdmin
-    .from('clubs')
-    .select('id')
-    .eq('id', req.params.clubId)
-    .eq('host_id', req.user.id)
-    .maybeSingle();
-  if (clubErr) return dbError(res, clubErr);
-  if (!club) return notFound(res, 'Club');
-  next();
-}, checkCapacity, async (req, res) => {
-  const { display_name, phone, dupr_level, member_type } = req.body;
+router.post('/:clubId/members', checkCapacity, async (req, res) => {
+  const display_name = (req.body.display_name || '').trim();
   if (!display_name) return res.status(400).json({ error: 'display_name is required.' });
+  if (!validDupr(req.body.dupr_level)) return res.status(400).json({ error: 'dupr_level must be between 0 and 9.99.' });
+  const member_type = req.body.member_type || 'fixed';
+  if (!MEMBER_TYPES.includes(member_type)) return res.status(400).json({ error: 'member_type must be fixed or guest.' });
 
   const { data, error } = await supabaseAdmin
     .from('club_members')
     .insert({
-      club_id: req.params.clubId,
+      club_id: req.club.id,
       display_name,
-      phone,
-      dupr_level,
-      member_type: member_type || 'fixed',
+      phone: req.body.phone || null,
+      dupr_level: req.body.dupr_level === '' ? null : req.body.dupr_level ?? null,
+      member_type,
     })
-    .select()
-    .single();
+    .select().single();
   if (error) return dbError(res, error);
   res.status(201).json({ member: data, capacity: req.capacity });
 });
 
 router.patch('/:clubId/members/:memberId', async (req, res) => {
-  const { display_name, phone, dupr_level, member_type, status } = req.body;
+  if (!isUuid(req.params.memberId)) return res.status(400).json({ error: 'Invalid member id.' });
+
+  const { data: existing, error: findErr } = await supabaseAdmin
+    .from('club_members').select('*').eq('id', req.params.memberId).eq('club_id', req.club.id).maybeSingle();
+  if (findErr) return dbError(res, findErr);
+  if (!existing) return notFound(res, 'Member');
+
+  const fields = pick(req.body, ['display_name', 'phone', 'dupr_level', 'member_type', 'status']);
+  if (fields.display_name !== undefined && !String(fields.display_name).trim()) return res.status(400).json({ error: 'display_name cannot be empty.' });
+  if (!validDupr(fields.dupr_level)) return res.status(400).json({ error: 'dupr_level must be between 0 and 9.99.' });
+  if (fields.member_type !== undefined && !MEMBER_TYPES.includes(fields.member_type)) return res.status(400).json({ error: 'member_type must be fixed or guest.' });
+  if (fields.status !== undefined && !MEMBER_STATUSES.includes(fields.status)) return res.status(400).json({ error: 'Invalid status.' });
+
+  if (fields.status !== undefined) {
+    // Bringing someone back to 'active' takes a seat, so it is capacity-checked too.
+    if (fields.status === 'active' && existing.status !== 'active') {
+      const usage = await getUsage(req.user.id);
+      if (usage.current_usage >= usage.max_capacity) return res.status(403).json(limitBody(usage));
+    }
+    fields.removed_at = fields.status === 'removed' ? new Date().toISOString() : null;
+  }
+
   const { data, error } = await supabaseAdmin
-    .from('club_members')
-    .update({
-      display_name, phone, dupr_level, member_type, status,
-      removed_at: status === 'removed' ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', req.params.memberId)
-    .eq('club_id', req.params.clubId)
-    .select()
-    .maybeSingle();
+    .from('club_members').update({ ...fields, updated_at: new Date().toISOString() })
+    .eq('id', existing.id).select().single();
   if (error) return dbError(res, error);
-  if (!data) return notFound(res, 'Member');
   res.json({ member: data });
 });
 
-// ---- Rankings ----------------------------------------------------------
+// ---- Rankings & fund -------------------------------------------------------
 
 router.get('/:clubId/rankings/all-time', async (req, res) => {
   const { data, error } = await supabaseAdmin
-    .from('v_club_rankings_all_time')
-    .select('*')
-    .eq('club_id', req.params.clubId)
-    .order('win_rate_pct', { ascending: false });
+    .from('v_club_rankings_all_time').select('*').eq('club_id', req.club.id)
+    .order('wins', { ascending: false }).order('win_rate_pct', { ascending: false });
   if (error) return dbError(res, error);
   res.json({ rankings: data });
 });
 
 router.get('/:clubId/rankings/monthly', async (req, res) => {
   const { data, error } = await supabaseAdmin
-    .from('v_club_rankings_monthly')
-    .select('*')
-    .eq('club_id', req.params.clubId)
-    .order('month', { ascending: false })
-    .order('win_rate_pct', { ascending: false });
+    .from('v_club_rankings_monthly').select('*').eq('club_id', req.club.id)
+    .order('month', { ascending: false }).order('wins', { ascending: false });
   if (error) return dbError(res, error);
   res.json({ rankings: data });
 });
 
-// ---- Fund balance --------------------------------------------------------
-
 router.get('/:clubId/fund-balance', async (req, res) => {
   const { data, error } = await supabaseAdmin
-    .from('v_club_fund_balance')
-    .select('*')
-    .eq('club_id', req.params.clubId)
-    .maybeSingle();
+    .from('v_club_fund_balance').select('*').eq('club_id', req.club.id).maybeSingle();
   if (error) return dbError(res, error);
-  res.json({ balance: data || { club_id: req.params.clubId, balance: 0, total_income: 0, total_expense: 0 } });
+  res.json({ balance: data || { club_id: req.club.id, balance: 0, total_income: 0, total_expense: 0 } });
 });
 
 module.exports = router;
