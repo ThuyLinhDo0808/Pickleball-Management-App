@@ -32,7 +32,7 @@ export default function EventListScreen({ navigation }) {
       contentContainerStyle={{ padding: 16 }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.muted} />}
       ListHeaderComponent={header}
-      ListEmptyComponent={<Empty title="No events yet" subtitle="Create your first kèo to open registration, track check-ins and see your profit." />}
+      ListEmptyComponent={<Empty title="No events yet" subtitle="Create your first sự kiện to open registration, track check-ins and see your profit." />}
       renderItem={({ item }) => (
         <Card onPress={() => navigation.navigate('EventHome', { eventId: item.id, eventTitle: item.title })}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>

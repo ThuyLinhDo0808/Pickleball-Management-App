@@ -2,8 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { FlatList, RefreshControl, View } from 'react-native';
 import { api } from '../../services/api';
 import { useLoad } from '../../hooks/useLoad';
+import { useI18n } from '../../i18n';
 import { colors } from '../../theme';
-import { T, Card, Chip, Segmented, Empty, ErrorState, Loading } from '../../components/ui';
+import { T, Card, Chip, Segmented, Avatar, EmptyState, ErrorState, Loading } from '../../components/ui';
 
 function tone(pct) {
   if (pct === null || pct === undefined) return 'neutral';
@@ -11,12 +12,13 @@ function tone(pct) {
 }
 
 export default function PlayersScreen() {
+  const { t } = useI18n();
   const { data, error, loading, refreshing, refresh, retry } = useLoad(() => api.get('/api/events/players/reliability'), []);
   const [order, setOrder] = useState('worst');
 
   const players = useMemo(() => {
     const list = [...(data?.players || [])];
-    const score = (p) => (p.reliability_pct === null ? 101 : Number(p.reliability_pct)); // unknown last
+    const score = (p) => (p.reliability_pct === null ? 101 : Number(p.reliability_pct));
     list.sort((a, b) => (order === 'worst' ? score(a) - score(b) : score(b) - score(a)));
     return list;
   }, [data, order]);
@@ -32,29 +34,19 @@ export default function PlayersScreen() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.muted} />}
       ListHeaderComponent={
         <View>
-          <Segmented
-            value={order}
-            onChange={setOrder}
-            options={[{ value: 'worst', label: 'Least reliable first' }, { value: 'best', label: 'Most reliable first' }]}
-          />
-          <T muted size={12} style={{ marginBottom: 10 }}>
-            Reliability = check-ins ÷ (check-ins + no-shows) across your past events. Players are matched by phone number, so save phones for accurate tracking.
-          </T>
+          <Segmented value={order} onChange={setOrder} options={[{ value: 'worst', label: t('players.worstFirst') }, { value: 'best', label: t('players.bestFirst') }]} />
+          <T muted size={12} style={{ marginBottom: 12 }}>{t('players.explain')}</T>
         </View>
       }
-      ListEmptyComponent={<Empty title="No players yet" subtitle="Players appear here once they're added to an event." />}
+      ListEmptyComponent={<EmptyState icon="people-outline" title={t('players.emptyTitle')} subtitle={t('players.emptyBody')} />}
       renderItem={({ item }) => (
-        <Card style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flex: 1, paddingRight: 8 }}>
-            <T bold size={16}>{item.display_name}</T>
-            <T muted size={12} style={{ marginTop: 2 }}>
-              {item.events_registered} event{item.events_registered === 1 ? '' : 's'} · {item.check_ins} showed · {item.no_shows} no-show
-            </T>
+        <Card style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Avatar name={item.display_name} />
+          <View style={{ flex: 1 }}>
+            <T bold size={16} numberOfLines={1}>{item.display_name}</T>
+            <T muted size={12} style={{ marginTop: 2 }}>{t('players.stats', { events: item.events_registered, shown: item.check_ins, noshow: item.no_shows })}</T>
           </View>
-          <Chip
-            label={item.reliability_pct === null ? 'No data yet' : `${Number(item.reliability_pct).toFixed(0)}%`}
-            tone={tone(item.reliability_pct === null ? null : Number(item.reliability_pct))}
-          />
+          <Chip label={item.reliability_pct === null ? t('players.noData') : `${Number(item.reliability_pct).toFixed(0)}%`} tone={tone(item.reliability_pct === null ? null : Number(item.reliability_pct))} />
         </Card>
       )}
     />

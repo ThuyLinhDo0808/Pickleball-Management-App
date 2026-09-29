@@ -2,13 +2,16 @@ import React, { useMemo, useState } from 'react';
 import { View, FlatList, RefreshControl, Alert } from 'react-native';
 import { api } from '../../services/api';
 import { useLoad } from '../../hooks/useLoad';
+import { useI18n } from '../../i18n';
 import { showError } from '../../utils/errors';
+import { toast } from '../../components/Toast';
 import { colors } from '../../theme';
-import { T, Card, Button, Field, Segmented, Chip, Empty, ErrorState, Loading, FormModal } from '../../components/ui';
+import { T, Card, Button, Field, Segmented, Chip, Avatar, EmptyState, ErrorState, Loading, FormModal, Fab } from '../../components/ui';
 import CapacityBanner from '../../components/CapacityBanner';
 
 export default function MembersScreen({ route, navigation }) {
   const { clubId } = route.params;
+  const { t } = useI18n();
   const { data, error, loading, refreshing, refresh, reload, retry } = useLoad(
     () => api.get(`/api/clubs/${clubId}/members`), [clubId]
   );
@@ -32,61 +35,57 @@ export default function MembersScreen({ route, navigation }) {
       <FlatList
         data={filtered}
         keyExtractor={(m) => m.id}
-        contentContainerStyle={{ padding: 16, paddingBottom: 90 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.muted} />}
         ListHeaderComponent={
           <View>
             <CapacityBanner />
-            <T muted style={{ marginBottom: 10 }}>
-              {active.length} active · {active.length - guests} fixed · {guests} guest
+            <T muted style={{ marginBottom: 12 }}>
+              {t('members.summary', { active: active.length, fixed: active.length - guests, guests })}
             </T>
             {members.length > 8 ? (
-              <Field value={query} onChangeText={setQuery} placeholder="Search members" autoCorrect={false} />
+              <Field value={query} onChangeText={setQuery} placeholder={t('members.search')} autoCorrect={false} />
             ) : null}
           </View>
         }
         ListEmptyComponent={
-          <Empty
-            title={query ? 'No matches' : 'No members yet'}
-            subtitle={query ? 'Try a different name.' : 'Tap "Add member" to build your roster.'}
+          <EmptyState
+            icon="person-add-outline"
+            title={query ? t('members.noResults') : t('members.emptyTitle')}
+            subtitle={query ? t('members.noResultsBody') : t('members.emptyBody')}
           />
         }
         renderItem={({ item }) => (
           <Card onPress={() => setEditing(item)} style={{ opacity: item.status === 'inactive' ? 0.6 : 1 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <View style={{ flex: 1, paddingRight: 8 }}>
-                <T bold size={16}>{item.display_name}</T>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Avatar name={item.display_name} />
+              <View style={{ flex: 1 }}>
+                <T bold size={16} numberOfLines={1}>{item.display_name}</T>
                 <T muted size={12} style={{ marginTop: 2 }}>
-                  {item.dupr_level != null ? `DUPR ${Number(item.dupr_level).toFixed(2)}` : 'No rating'}
+                  {item.dupr_level != null ? `DUPR ${Number(item.dupr_level).toFixed(2)}` : t('members.noRating')}
                   {item.phone ? ` · ${item.phone}` : ''}
                 </T>
               </View>
               <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                <Chip label={item.member_type === 'fixed' ? 'Fixed' : 'Guest'} tone={item.member_type === 'fixed' ? 'info' : 'neutral'} />
-                {item.status === 'inactive' ? <Chip label="Inactive" tone="warn" /> : null}
+                <Chip label={item.member_type === 'fixed' ? t('type.fixed') : t('type.guest')} tone={item.member_type === 'fixed' ? 'info' : 'neutral'} />
+                {item.status === 'inactive' ? <Chip label={t('members.inactive')} tone="warn" /> : null}
               </View>
             </View>
           </Card>
         )}
       />
 
-      <View style={{ position: 'absolute', left: 16, right: 16, bottom: 16 }}>
-        <Button title="+ Add member" onPress={() => setEditing('new')} />
-      </View>
+      <Fab icon="person-add" label={t('members.add')} onPress={() => setEditing('new')} />
 
-      <FormModal
-        visible={!!editing}
-        title={editing === 'new' ? 'Add member' : 'Edit member'}
-        onClose={() => setEditing(null)}
-      >
+      <FormModal visible={!!editing} title={editing === 'new' ? t('members.addTitle') : t('members.editTitle')} onClose={() => setEditing(null)}>
         {editing ? (
           <MemberForm
             key={editing === 'new' ? 'new' : editing.id}
             member={editing}
             clubId={clubId}
             navigation={navigation}
-            onDone={() => { setEditing(null); reload(); }}
+            onDone={(msg) => { setEditing(null); reload(); if (msg) toast(msg); }}
           />
         ) : null}
       </FormModal>
@@ -95,6 +94,7 @@ export default function MembersScreen({ route, navigation }) {
 }
 
 function MemberForm({ member, clubId, navigation, onDone }) {
+  const { t } = useI18n();
   const isNew = member === 'new';
   const [name, setName] = useState(isNew ? '' : member.display_name);
   const [phone, setPhone] = useState(isNew ? '' : member.phone || '');
@@ -106,9 +106,9 @@ function MemberForm({ member, clubId, navigation, onDone }) {
 
   async function save() {
     const e = {};
-    if (!name.trim()) e.name = 'Name is required.';
+    if (!name.trim()) e.name = t('members.nameRequired');
     const rating = dupr.trim() ? Number(dupr.replace(',', '.')) : null;
-    if (rating !== null && (!Number.isFinite(rating) || rating < 0 || rating > 9.99)) e.dupr = 'Enter a rating like 3.5 (0 to 9.99).';
+    if (rating !== null && (!Number.isFinite(rating) || rating < 0 || rating > 9.99)) e.dupr = t('members.duprInvalid');
     setErrors(e);
     if (Object.keys(e).length) return;
 
@@ -118,25 +118,25 @@ function MemberForm({ member, clubId, navigation, onDone }) {
       setSaving(true);
       if (isNew) await api.post(`/api/clubs/${clubId}/members`, payload);
       else await api.patch(`/api/clubs/${clubId}/members/${member.id}`, payload);
-      onDone();
+      onDone(isNew ? t('members.added', { name: payload.display_name }) : t('common.saved'));
     } catch (err) {
-      showError('Could not save member', err, navigation);
+      showError(t('members.saveFailed'), err, navigation);
     } finally {
       setSaving(false);
     }
   }
 
   function remove() {
-    Alert.alert('Remove member?', `${member.display_name} will be removed from the roster. Their past matches and rankings are kept.`, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(t('members.removeTitle'), t('members.removeBody', { name: member.display_name }), [
+      { text: t('common.cancel'), style: 'cancel' },
       {
-        text: 'Remove', style: 'destructive',
+        text: t('members.remove'), style: 'destructive',
         onPress: async () => {
           try {
             await api.patch(`/api/clubs/${clubId}/members/${member.id}`, { status: 'removed' });
-            onDone();
+            onDone(t('members.removed'));
           } catch (err) {
-            showError('Could not remove member', err, navigation);
+            showError(t('members.removeFailed'), err, navigation);
           }
         },
       },
@@ -145,23 +145,19 @@ function MemberForm({ member, clubId, navigation, onDone }) {
 
   return (
     <View>
-      <Field label="Name" value={name} onChangeText={setName} error={errors.name} placeholder="Full name" autoFocus={isNew} />
-      <Field label="Phone (optional)" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-      <Field label="DUPR / level (optional)" value={dupr} onChangeText={setDupr} error={errors.dupr} keyboardType="decimal-pad" placeholder="e.g. 3.50" />
-      <T muted size={12} style={{ marginBottom: 4 }}>Member type</T>
-      <Segmented value={type} onChange={setType} options={[{ value: 'fixed', label: 'Fixed' }, { value: 'guest', label: 'Guest' }]} />
+      <Field label={t('members.name')} value={name} onChangeText={setName} error={errors.name} autoFocus={isNew} />
+      <Field label={t('members.phone')} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+      <Field label={t('members.dupr')} value={dupr} onChangeText={setDupr} error={errors.dupr} keyboardType="decimal-pad" placeholder="3.50" />
+      <T muted size={12} bold style={{ marginBottom: 6 }}>{t('members.type')}</T>
+      <Segmented value={type} onChange={setType} options={[{ value: 'fixed', label: t('type.fixed') }, { value: 'guest', label: t('type.guest') }]} />
       {!isNew ? (
         <>
-          <T muted size={12} style={{ marginBottom: 4 }}>Status</T>
-          <Segmented
-            value={status}
-            onChange={setStatus}
-            options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }]}
-          />
+          <T muted size={12} bold style={{ marginBottom: 6 }}>{t('members.status')}</T>
+          <Segmented value={status} onChange={setStatus} options={[{ value: 'active', label: t('members.active') }, { value: 'inactive', label: t('members.inactive') }]} />
         </>
       ) : null}
-      <Button title={isNew ? 'Add member' : 'Save changes'} onPress={save} loading={saving} />
-      {!isNew ? <Button title="Remove from club" variant="ghost" onPress={remove} style={{ marginTop: 10 }} /> : null}
+      <Button title={isNew ? t('members.add') : t('common.save')} onPress={save} loading={saving} />
+      {!isNew ? <Button title={t('members.removeFromClub')} variant="ghost" onPress={remove} style={{ marginTop: 10 }} /> : null}
     </View>
   );
 }

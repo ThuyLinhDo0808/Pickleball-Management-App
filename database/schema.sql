@@ -136,6 +136,7 @@ create index if not exists idx_club_members_club on public.club_members(club_id)
 create table if not exists public.events (
   id                uuid primary key default gen_random_uuid(),
   host_id           uuid not null references public.users(id) on delete cascade,
+  club_id           uuid references public.clubs(id) on delete set null,   -- optional: which club holds this event
   title             text not null,
   event_date        date not null,
   start_time        time not null,
@@ -159,6 +160,8 @@ create table if not exists public.event_participants (
   user_id           uuid references public.users(id) on delete set null,
   display_name      text not null,
   phone             text,
+  dupr_level        numeric(3,2),          -- snapshot of the player's level at registration
+  source_club_member_id uuid references public.club_members(id) on delete set null, -- set when imported from a club
   status            participant_status not null default 'registered',
   fee_paid          boolean not null default false,
   fee_amount        numeric(12,2),         -- overrides events.fee_amount if set
@@ -175,6 +178,15 @@ create index if not exists idx_event_participants_event on public.event_particip
 create index if not exists idx_event_participants_active
   on public.event_participants(event_id)
   where status in ('registered', 'waitlist', 'checked_in');
+
+-- ---- Upgrades for databases created with an earlier version of this script ----
+-- (CREATE TABLE IF NOT EXISTS skips existing tables, so new columns are added here.)
+alter table public.events add column if not exists club_id uuid references public.clubs(id) on delete set null;
+alter table public.event_participants add column if not exists dupr_level numeric(3,2);
+alter table public.event_participants add column if not exists source_club_member_id uuid references public.club_members(id) on delete set null;
+create index if not exists idx_events_club on public.events(club_id);
+create index if not exists idx_events_host_date on public.events(host_id, event_date);
+create index if not exists idx_event_participants_source on public.event_participants(source_club_member_id);
 
 -- Reliability score is derived, not stored redundantly: expose via a view (section 8).
 
@@ -377,6 +389,21 @@ left join (
   where event_id is not null and is_voided = false
   group by event_id
 ) t on t.event_id = e.id;
+
+-- 8.5b Event summary: the event row + club name + live head-counts (schedule & lists).
+drop view if exists public.v_event_summary;
+create view public.v_event_summary as
+select
+  e.*,
+  c.name as club_name,
+  (select count(*) from public.event_participants ep
+     where ep.event_id = e.id and ep.status in ('registered', 'checked_in', 'no_show')) as main_count,
+  (select count(*) from public.event_participants ep
+     where ep.event_id = e.id and ep.status = 'waitlist') as waitlist_count,
+  (select count(*) from public.event_participants ep
+     where ep.event_id = e.id and ep.status = 'checked_in') as checked_in_count
+from public.events e
+left join public.clubs c on c.id = e.club_id;
 
 -- 8.6 Player reliability score across all past events (per host's player pool),
 --     matched by phone number when no user_id is present (manual entries).

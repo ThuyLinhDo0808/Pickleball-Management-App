@@ -3,16 +3,20 @@ import { ScrollView, View, Alert } from 'react-native';
 import { api } from '../services/api';
 import { useLoad } from '../hooks/useLoad';
 import { showError } from '../utils/errors';
-import { T, Card, Button, Chip, ErrorState, Loading } from '../components/ui';
+import { useI18n } from '../i18n';
+import { colors } from '../theme';
+import { toast } from '../components/Toast';
+import { T, Card, Button, Chip, ErrorState, Loading, ProgressBar } from '../components/ui';
 
 const TIERS = [
-  { tier: 'free', label: 'Free', cap: 30 },
-  { tier: 'basic', label: 'Basic', cap: 100 },
-  { tier: 'standard', label: 'Standard', cap: 300 },
-  { tier: 'pro', label: 'Pro', cap: 1000 },
+  { tier: 'free', cap: 30 },
+  { tier: 'basic', cap: 100 },
+  { tier: 'standard', cap: 300 },
+  { tier: 'pro', cap: 1000 },
 ];
 
 export default function PlanScreen({ navigation }) {
+  const { t } = useI18n();
   const { data, error, loading, reload, retry } = useLoad(() => api.get('/api/host/me'), []);
   const [busy, setBusy] = useState(null);
 
@@ -21,60 +25,60 @@ export default function PlanScreen({ navigation }) {
 
   const sub = data.subscription;
 
-  function choose(t) {
-    const overBy = sub.current_usage - t.cap;
-    const warning = overBy > 0
-      ? `\n\nYou currently use ${sub.current_usage}, which is over the ${t.cap} limit. Nothing is deleted, but you won't be able to add anyone until you're under it.`
-      : '';
-    Alert.alert(`Switch to ${t.label}?`, `Limit becomes ${t.cap} active members/participants.${warning}`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Switch',
-        onPress: async () => {
-          try {
-            setBusy(t.tier);
-            await api.post('/api/host/subscription', { tier: t.tier });
-            reload();
-          } catch (e) {
-            showError('Could not change plan', e, navigation);
-          } finally {
-            setBusy(null);
-          }
+  function choose(item) {
+    const over = sub.current_usage > item.cap;
+    const name = t(`tier.${item.tier}`);
+    Alert.alert(
+      t('plan.switchTitle', { name }),
+      t('plan.switchBody', { cap: item.cap }) + (over ? `\n\n${t('plan.overLimit', { used: sub.current_usage, cap: item.cap })}` : ''),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('plan.switch'),
+          onPress: async () => {
+            try {
+              setBusy(item.tier);
+              await api.post('/api/host/subscription', { tier: item.tier });
+              toast(t('plan.switched', { name }));
+              reload();
+            } catch (e) {
+              showError(t('plan.switchFailed'), e, navigation);
+            } finally {
+              setBusy(null);
+            }
+          },
         },
-      },
-    ]);
+      ]
+    );
   }
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
       <Card>
-        <T muted size={12}>Current usage</T>
-        <T bold size={26} style={{ marginVertical: 2 }}>{sub.current_usage} / {sub.max_capacity}</T>
-        <T muted size={12}>
-          Counts your active club members plus players on upcoming events (finished and cancelled events don't count).
-        </T>
+        <T muted size={12} bold>{t('plan.currentUsage')}</T>
+        <T bold size={30} style={{ marginVertical: 4 }}>{sub.current_usage} / {sub.max_capacity}</T>
+        <ProgressBar value={sub.current_usage} max={sub.max_capacity} />
+        <T muted size={12} style={{ marginTop: 10 }}>{t('plan.usageExplain')}</T>
       </Card>
 
-      {TIERS.map((t) => {
-        const current = t.tier === sub.tier;
+      {TIERS.map((item) => {
+        const current = item.tier === sub.tier;
         return (
-          <Card key={t.tier} style={current ? { borderWidth: 1, borderColor: '#60A5FA' } : null}>
+          <Card key={item.tier} style={current ? { borderColor: colors.accent } : null}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <View>
-                <T bold size={18}>{t.label}</T>
-                <T muted size={13} style={{ marginTop: 2 }}>Up to {t.cap} members & participants</T>
+                <T bold size={18}>{t(`tier.${item.tier}`)}</T>
+                <T muted size={13} style={{ marginTop: 2 }}>{t('plan.upTo', { cap: item.cap })}</T>
               </View>
-              {current ? <Chip label="Current" tone="info" /> : (
-                <Button small title="Select" variant="muted" loading={busy === t.tier} onPress={() => choose(t)} />
+              {current ? <Chip label={t('plan.current')} tone="accent" /> : (
+                <Button small variant="secondary" title={t('plan.select')} loading={busy === item.tier} onPress={() => choose(item)} />
               )}
             </View>
           </Card>
         );
       })}
 
-      <T muted size={12} style={{ marginTop: 8 }}>
-        Billing isn't connected yet, so plans switch instantly for testing.
-      </T>
+      <T muted size={12} style={{ marginTop: 8 }}>{t('plan.billingNote')}</T>
     </ScrollView>
   );
 }

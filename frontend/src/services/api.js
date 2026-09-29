@@ -4,7 +4,7 @@ import { supabase } from './supabase';
 //  - Physical phone on Wi-Fi: your computer's LAN IP, e.g. http://192.168.1.20:4000
 //  - Deployed: your Render URL, e.g. https://pickleball-backend.onrender.com
 // 'localhost' only works in a simulator on the same machine, never on a real phone.
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.96.239:4000';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.97.24:4000';
 
 // Render's free tier sleeps when idle; the first request can take ~30-60s.
 const TIMEOUT_MS = 60000;
@@ -29,12 +29,10 @@ async function request(path, { method = 'GET', body } = {}) {
       signal: controller.signal,
     });
   } catch (e) {
-    const err = new Error(
-      e?.name === 'AbortError'
-        ? 'The server took too long to respond. It may be waking up - please try again in a moment.'
-        : 'Cannot reach the server. Check your internet connection and the API URL.'
-    );
-    err.code = 'NETWORK';
+    // Codes (not messages) are what the UI translates; the English text is only a fallback.
+    const aborted = e?.name === 'AbortError';
+    const err = new Error(aborted ? 'The server took too long to respond.' : 'Cannot reach the server.');
+    err.code = aborted ? 'TIMEOUT' : 'NETWORK';
     throw err;
   } finally {
     clearTimeout(timer);

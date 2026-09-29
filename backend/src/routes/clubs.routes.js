@@ -30,11 +30,31 @@ function validDupr(v) {
 
 // ---- Clubs ---------------------------------------------------------------
 
+// List the host's clubs with live counts: active members and upcoming events.
+// The app passes its own local date as ?today=YYYY-MM-DD so "upcoming" respects the host's timezone.
 router.get('/', async (req, res) => {
-  const { data, error } = await supabaseAdmin
+  const { data: clubs, error } = await supabaseAdmin
     .from('clubs').select('*').eq('host_id', req.user.id).order('created_at', { ascending: false });
   if (error) return dbError(res, error);
-  res.json({ clubs: data });
+  if (!clubs.length) return res.json({ clubs: [] });
+
+  const today = /^\d{4}-\d{2}-\d{2}$/.test(req.query.today || '') ? req.query.today : new Date().toISOString().slice(0, 10);
+  const ids = clubs.map((c) => c.id);
+
+  const [members, events] = await Promise.all([
+    supabaseAdmin.from('club_members').select('club_id').in('club_id', ids).eq('status', 'active'),
+    supabaseAdmin.from('events').select('club_id').in('club_id', ids).gte('event_date', today).in('status', ['draft', 'open', 'closed']),
+  ]);
+  if (members.error) return dbError(res, members.error);
+  if (events.error) return dbError(res, events.error);
+
+  const tally = (rows) => rows.reduce((acc, r) => { acc[r.club_id] = (acc[r.club_id] || 0) + 1; return acc; }, {});
+  const memberCounts = tally(members.data);
+  const eventCounts = tally(events.data);
+
+  res.json({
+    clubs: clubs.map((c) => ({ ...c, member_count: memberCounts[c.id] || 0, upcoming_events: eventCounts[c.id] || 0 })),
+  });
 });
 
 router.post('/', async (req, res) => {

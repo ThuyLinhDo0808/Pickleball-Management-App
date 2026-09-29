@@ -6,9 +6,11 @@ import { StatusBar } from 'expo-status-bar';
 
 import { supabase } from './src/services/supabase';
 import { ModeProvider, useMode } from './src/context/ModeContext';
+import { I18nProvider } from './src/i18n';
+import { ToastHost } from './src/components/Toast';
 import { colors, navTheme } from './src/theme';
 import SignInScreen from './src/screens/SignInScreen';
-import ModeSwitcherScreen from './src/screens/ModeSwitcherScreen';
+import WelcomeScreen from './src/screens/WelcomeScreen';
 import ClubNavigator from './src/navigation/ClubNavigator';
 import EventNavigator from './src/navigation/EventNavigator';
 
@@ -25,7 +27,7 @@ function AuthGate({ children }) {
   if (session === undefined) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
-        <ActivityIndicator size="large" color="#fff" />
+        <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
   }
@@ -33,11 +35,14 @@ function AuthGate({ children }) {
   return children(session);
 }
 
-// The workspace switch: `key={mode}` throws away the whole navigation tree when
-// the mode changes, so Club Manager and Xé Vé Manager never share screen state.
+// The workspace switch: `key={mode}` throws away the whole navigation tree when the
+// mode changes, so Club Manager and Xé Vé Manager never share screen/navigation state.
+// The chosen workspace is remembered (ModeContext persists it), so returning hosts skip
+// the welcome screen and land straight back where they left off.
 function Root({ session }) {
-  const { mode } = useMode();
-  if (!mode) return <ModeSwitcherScreen email={session.user?.email} />;
+  const { mode, ready } = useMode();
+  if (!ready) return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+  if (!mode) return <WelcomeScreen email={session.user?.email} />;
   return (
     <NavigationContainer key={mode} theme={navTheme}>
       {mode === 'club' ? <ClubNavigator /> : <EventNavigator />}
@@ -48,10 +53,13 @@ function Root({ session }) {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
-      <ModeProvider>
-        <AuthGate>{(session) => <Root session={session} />}</AuthGate>
-      </ModeProvider>
+      <I18nProvider>
+        <StatusBar style="light" />
+        <ModeProvider>
+          <AuthGate>{(session) => <Root session={session} />}</AuthGate>
+          <ToastHost />
+        </ModeProvider>
+      </I18nProvider>
     </SafeAreaProvider>
   );
 }
